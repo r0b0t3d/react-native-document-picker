@@ -16,15 +16,24 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 
-/**
- * Original file from rn-fetch-blob
- */
 public class PathResolver {
     @TargetApi(19)
     public static String getRealPathFromURI(final Context context, final Uri uri) {
+        String path = "";
+        try {
+            path = processUri(context, uri);
+        } catch (Exception exception) {
+            exception.printStackTrace();
+        }
+        if (TextUtils.isEmpty(path)) {
+            path = copyFile(context, uri);
+        }
+        return path;
+    }
 
+    private static String processUri(Context context, Uri uri) {
         final boolean isKitKat = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
-
+        String path = "";
         // DocumentProvider
         if (isKitKat && DocumentsContract.isDocumentUri(context, uri)) {
             // ExternalStorageProvider
@@ -34,50 +43,33 @@ public class PathResolver {
                 final String type = split[0];
 
                 if ("primary".equalsIgnoreCase(type)) {
-                    return Environment.getExternalStorageDirectory() + "/" + split[1];
+                    path = Environment.getExternalStorageDirectory() + "/" + split[1];
                 }
-
-                // TODO handle non-primary volumes
-            }
-            // DownloadsProvider
-            else if (isDownloadsDocument(uri)) {
-                try {
-                    final String id = DocumentsContract.getDocumentId(uri);
-                    //Starting with Android O, this "id" is not necessarily a long (row number),
-                    //but might also be a "raw:/some/file/path" URL
-                    if (id != null && id.startsWith("raw:/")) {
-                        Uri rawuri = Uri.parse(id);
-                        String path = rawuri.getPath();
-                        return path;
-                    }
+            } else if (isDownloadsDocument(uri)) { // DownloadsProvider
+                final String id = DocumentsContract.getDocumentId(uri);
+                //Starting with Android O, this "id" is not necessarily a long (row number),
+                //but might also be a "raw:/some/file/path" URL
+                if (id != null && id.startsWith("raw:/")) {
+                    Uri rawuri = Uri.parse(id);
+                    path = rawuri.getPath();
+                } else {
                     String[] contentUriPrefixesToTry = new String[]{
                             "content://downloads/public_downloads",
                             "content://downloads/my_downloads"
                     };
                     for (String contentUriPrefix : contentUriPrefixesToTry) {
-
                         final Uri contentUri = ContentUris.withAppendedId(
                                 Uri.parse(contentUriPrefix), Long.valueOf(id));
-
-                        String path = getDataColumn(context, contentUri, null, null);
-                        if (path != null) {
-                            return path;
+                        path = getDataColumn(context, contentUri, null, null);
+                        if (!TextUtils.isEmpty(path)) {
+                            break;
                         }
                     }
-                    return copyFile(context, uri);
                 }
-                catch (Exception ex) {
-                    //something went wrong, but android should still be able to handle the original uri by returning null here (see readFile(...))
-                    return null;
-                }
-
-            }
-            // MediaProvider
-            else if (isMediaDocument(uri)) {
+            } else if (isMediaDocument(uri)) { // MediaProvider
                 final String docId = DocumentsContract.getDocumentId(uri);
                 final String[] split = docId.split(":");
                 final String type = split[0];
-
                 Uri contentUri = null;
                 if ("image".equals(type)) {
                     contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
@@ -92,42 +84,14 @@ public class PathResolver {
                         split[1]
                 };
 
-                return getDataColumn(context, contentUri, selection, selectionArgs);
+                path = getDataColumn(context, contentUri, selection, selectionArgs);
+            }  else if ("content".equalsIgnoreCase(uri.getScheme())) {
+                path = getDataColumn(context, uri, null, null);
             }
-            else if ("content".equalsIgnoreCase(uri.getScheme())) {
-
-                return getContentData(context, uri);
-            }
-            // Other Providers
-            else{
-                return copyFile(context, uri);
-            }
-        }
-        // MediaStore (and general)
-        else if ("content".equalsIgnoreCase(uri.getScheme())) {
-
-            return getContentData(context, uri);
-        }
-        // File
-        else if ("file".equalsIgnoreCase(uri.getScheme())) {
-            return uri.getPath();
-        }
-
-        return null;
-    }
-
-    private static String getContentData(Context context, Uri uri) {
-        // Return the remote address
-        if (isGooglePhotosUri(uri)) {
-            return uri.getLastPathSegment();
-        } else if (isGoogleDriveUri(uri)) {
-            return copyFile(context, uri);
-        }
-
-        String path = getDataColumn(context, uri, null, null);
-        if (TextUtils.isEmpty(path)) {
-            // Try to copy file
-            return copyFile(context, uri);
+        } else if ("content".equalsIgnoreCase(uri.getScheme())) { // MediaStore (and general)
+            path = getDataColumn(context, uri, null, null);
+        } else if ("file".equalsIgnoreCase(uri.getScheme())) { // File
+            path = uri.getPath();
         }
         return path;
     }
@@ -157,12 +121,14 @@ public class PathResolver {
 
     private static String getContentName(ContentResolver resolver, Uri uri) {
         Cursor cursor = resolver.query(uri, null, null, null, null);
-        cursor.moveToFirst();
-        int nameIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
-        if (nameIndex >= 0) {
-            String name = cursor.getString(nameIndex);
-            cursor.close();
-            return name;
+        if (cursor != null) {
+            cursor.moveToFirst();
+            int nameIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
+            if (nameIndex >= 0) {
+                String name = cursor.getString(nameIndex);
+                cursor.close();
+                return name;
+            }
         }
         return null;
     }
@@ -179,14 +145,10 @@ public class PathResolver {
      */
     public static String getDataColumn(Context context, Uri uri, String selection,
                                        String[] selectionArgs) {
-
         Cursor cursor = null;
         String result = null;
         final String column = "_data";
-        final String[] projection = {
-                column
-        };
-
+        final String[] projection = { column };
         try {
             cursor = context.getContentResolver().query(uri, projection, selection, selectionArgs,
                     null);
@@ -194,12 +156,10 @@ public class PathResolver {
                 final int index = cursor.getColumnIndexOrThrow(column);
                 result = cursor.getString(index);
             }
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             ex.printStackTrace();
             return null;
-        }
-        finally {
+        } finally {
             if (cursor != null)
                 cursor.close();
         }
@@ -230,16 +190,5 @@ public class PathResolver {
     public static boolean isMediaDocument(Uri uri) {
         return "com.android.providers.media.documents".equals(uri.getAuthority());
     }
-
-    /**
-     * @param uri The Uri to check.
-     * @return Whether the Uri authority is Google Photos.
-     */
-    public static boolean isGooglePhotosUri(Uri uri) {
-        return "com.google.android.apps.photos.content".equals(uri.getAuthority());
-    }
-
-    public static boolean isGoogleDriveUri(Uri uri) {
-        return "content://com.google.android.apps.docs.storage.legacy".equals(uri.getAuthority());
-    }
 }
+
