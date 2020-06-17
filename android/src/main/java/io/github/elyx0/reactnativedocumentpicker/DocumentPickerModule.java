@@ -210,7 +210,7 @@ public class DocumentPickerModule extends ReactContextBaseJavaModule {
 			// TODO vonovak - FIELD_FILE_COPY_URI is implemented on iOS only (copyTo) settings
 			map.putString(FIELD_FILE_COPY_URI, uri.toString());
 
-			ContentResolver contentResolver = getReactApplicationContext().getContentResolver();
+			ContentResolver contentResolver = context.getContentResolver();
 
 			map.putString(FIELD_TYPE, contentResolver.getType(uri));
 
